@@ -1,10 +1,10 @@
 streamlit
-tensorflow
+tensorflow-cpu
 pandas
-numpy
+numpy<2.0.0
 matplotlib
 seaborn
-pillow
+Pillow
 scikit-learn
 plotly
-protobuf
+protobuf<5.0.0
