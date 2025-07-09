@@ -1,6 +1,5 @@
 streamlit
-tensorflow
+tensorflow-cpu
 pillow
 numpy
-matplotlib
 requests
