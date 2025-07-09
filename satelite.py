@@ -1,223 +1,169 @@
 import streamlit as st
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image
-import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt
+import pandas as pd
 import os
-import requests
-from io import BytesIO
+import numpy as np
+import matplotlib.pyplot as plt
+import itertools
+from PIL import Image
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
 
-# Set page config
-st.set_page_config(
-    page_title="Satellite Image Classifier",
-    page_icon="🛰️",
-    layout="wide"
-)
+# Set Streamlit page config
+st.set_page_config(page_title="Satellite Image Classifier", layout="wide")
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        padding: 2rem 0;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        margin-bottom: 2rem;
-        border-radius: 10px;
-    }
-    .prediction-box {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        border-left: 4px solid #667eea;
-    }
-    .confidence-bar {
-        background-color: #e0e0e0;
-        border-radius: 10px;
-        overflow: hidden;
-        margin: 0.5rem 0;
-    }
-    .confidence-fill {
-        height: 20px;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        text-align: center;
-        line-height: 20px;
-        color: white;
-        font-size: 12px;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.title("🌍 Satellite Image Classification with CNN")
 
-# App title
-st.markdown("""
-<div class="main-header">
-    <h1>🛰️ Satellite Image Classifier</h1>
-    <p>Upload a satellite image to classify it into one of four categories: Cloudy, Desert, Green Area, or Water</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Class names
-class_names = ['Cloudy', 'Desert', 'Green_Area', 'Water']
-
-# Class descriptions
-class_descriptions = {
-    'Cloudy': '☁️ Cloud formations and overcast areas',
-    'Desert': '🏜️ Arid and sandy terrain',
-    'Green_Area': '🌿 Vegetation, forests, and green landscapes',
-    'Water': '🌊 Water bodies, rivers, lakes, and oceans'
+# Define the folder labels (edit these paths to your real dataset location)
+labels = {
+    "dataset/cloudy": "Cloudy",
+    "dataset/desert": "Desert",
+    "dataset/green_area": "Green_Area",
+    "dataset/water": "Water",
 }
 
-# Function to load model
-@st.cache_resource
-def load_trained_model():
-    """Load the trained model. For deployment, you'll need to have the model file."""
-    try:
-        # First, try to load from the same directory
-        if os.path.exists('Modelenv.v1.h5'):
-            model = load_model('Modelenv.v1.h5')
-            return model
-        else:
-            st.error("Model file not found. Please ensure 'Modelenv.v1.h5' is in the same directory as this script.")
-            return None
-    except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        return None
+# Sidebar: Model parameters
+st.sidebar.header("⚙️ Model Settings")
+epochs = st.sidebar.slider("Number of Epochs", 1, 20, 5)
+batch_size = st.sidebar.selectbox("Batch Size", [16, 32, 64], index=1)
+img_size = (128, 128)
 
-# Function to preprocess image
-def preprocess_image(uploaded_image):
-    """Preprocess the uploaded image for model prediction."""
-    try:
-        # Open image
-        img = Image.open(uploaded_image)
-        
-        # Convert to RGB if necessary
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        # Resize to model input size
-        img = img.resize((255, 255))
-        
-        # Convert to array and normalize
-        img_array = image.img_to_array(img)
-        img_array = np.expand_dims(img_array, axis=0)
-        img_array = img_array / 255.0
-        
-        return img_array, img
-    except Exception as e:
-        st.error(f"Error processing image: {str(e)}")
-        return None, None
+# Load dataset
+st.header("📊 Loading Dataset")
+data = pd.DataFrame(columns=['image_path', 'label'])
+for folder, label in labels.items():
+    if os.path.exists(folder):
+        for file in os.listdir(folder):
+            file_path = os.path.join(folder, file)
+            if os.path.isfile(file_path):
+                data = pd.concat([data, pd.DataFrame({'image_path': [file_path], 'label': [label]})], ignore_index=True)
+    else:
+        st.warning(f"Folder not found: {folder}")
 
-# Function to make prediction
-def predict_image(model, processed_image):
-    """Make prediction on the processed image."""
-    try:
-        prediction = model.predict(processed_image)
-        predicted_class_idx = np.argmax(prediction[0])
-        predicted_class = class_names[predicted_class_idx]
-        confidence = float(prediction[0][predicted_class_idx])
-        
-        # Get all class probabilities
-        class_probabilities = {class_names[i]: float(prediction[0][i]) for i in range(len(class_names))}
-        
-        return predicted_class, confidence, class_probabilities
-    except Exception as e:
-        st.error(f"Error making prediction: {str(e)}")
-        return None, None, None
+st.write(f"Total images found: {len(data)}")
 
-# Function to display confidence bars
-def display_confidence_bars(probabilities):
-    """Display confidence bars for all classes."""
-    st.subheader("Confidence Scores for All Classes:")
-    
-    for class_name, probability in probabilities.items():
-        percentage = probability * 100
-        st.write(f"**{class_name}**: {percentage:.2f}%")
-        
-        # Create a colored bar
-        bar_html = f"""
-        <div class="confidence-bar">
-            <div class="confidence-fill" style="width: {percentage}%;">
-                {percentage:.1f}%
-            </div>
-        </div>
-        """
-        st.markdown(bar_html, unsafe_allow_html=True)
+# Show sample images
+st.subheader("🖼️ Sample Images")
+fig, axes = plt.subplots(len(labels), 10, figsize=(15, len(labels)*1.5))
 
-# Main app logic
-def main():
-    # Load model
-    model = load_trained_model()
-    
-    if model is None:
-        st.stop()
-    
-    # Create two columns
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.header("Upload Image")
-        uploaded_file = st.file_uploader(
-            "Choose a satellite image...", 
-            type=['png', 'jpg', 'jpeg'],
-            help="Upload a satellite image to classify it"
+for i, (folder, label_name) in enumerate(labels.items()):
+    if os.path.exists(folder):
+        image_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+        sample_images = np.random.choice(image_files, min(10, len(image_files)), replace=False)
+        for j in range(10):
+            axes[i, j].axis('off')
+            if j < len(sample_images):
+                img = Image.open(os.path.join(folder, sample_images[j]))
+                axes[i, j].imshow(img)
+                axes[i, j].set_title(label_name, fontsize=8)
+plt.tight_layout()
+st.pyplot(fig)
+
+# Split data
+train_df, test_df = train_test_split(data, test_size=0.2, random_state=42)
+
+# Data Generators
+train_datagen = ImageDataGenerator(rescale=1./255,
+                                   shear_range=0.2,
+                                   zoom_range=0.2,
+                                   horizontal_flip=True,
+                                   rotation_range=45,
+                                   vertical_flip=True)
+test_datagen = ImageDataGenerator(rescale=1./255)
+
+train_generator = train_datagen.flow_from_dataframe(
+    dataframe=train_df,
+    x_col="image_path",
+    y_col="label",
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode="categorical"
+)
+test_generator = test_datagen.flow_from_dataframe(
+    dataframe=test_df,
+    x_col="image_path",
+    y_col="label",
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode="categorical"
+)
+
+# Build model
+st.subheader("🧠 Building CNN Model")
+model = Sequential([
+    Conv2D(32, (3, 3), activation='relu', input_shape=(img_size[0], img_size[1], 3)),
+    MaxPooling2D(2, 2),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D(2, 2),
+    Conv2D(128, (3, 3), activation='relu'),
+    MaxPooling2D(2, 2),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(len(labels), activation='softmax')
+])
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.summary(print_fn=lambda x: st.text(x))
+
+# Train model
+if st.button("🚀 Train Model"):
+    with st.spinner("Training..."):
+        history = model.fit(
+            train_generator,
+            epochs=epochs,
+            validation_data=test_generator
         )
-        
-        if uploaded_file is not None:
-            # Display uploaded image
-            st.subheader("Uploaded Image:")
-            st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
-            
-            # Process image
-            processed_image, display_image = preprocess_image(uploaded_file)
-            
-            if processed_image is not None:
-                # Make prediction
-                predicted_class, confidence, probabilities = predict_image(model, processed_image)
-                
-                if predicted_class is not None:
-                    with col2:
-                        st.header("Prediction Results")
-                        
-                        # Display main prediction
-                        st.markdown(f"""
-                        <div class="prediction-box">
-                            <h3>Predicted Class: {predicted_class}</h3>
-                            <p>{class_descriptions[predicted_class]}</p>
-                            <h4>Confidence: {confidence*100:.2f}%</h4>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Display confidence bars
-                        display_confidence_bars(probabilities)
-    
-    # Add information section
-    with st.expander("ℹ️ About this classifier"):
-        st.write("""
-        This satellite image classifier uses a Convolutional Neural Network (CNN) to categorize satellite images into four classes:
-        
-        - **Cloudy**: Images showing cloud formations and overcast areas
-        - **Desert**: Images of arid and sandy terrain
-        - **Green Area**: Images showing vegetation, forests, and green landscapes
-        - **Water**: Images of water bodies including rivers, lakes, and oceans
-        
-        The model was trained on a dataset of satellite images and uses deep learning techniques to achieve accurate classification.
-        """)
-    
-    # Add sample images section
-    with st.expander("📸 Sample Images"):
-        st.write("Here are some examples of the types of images the classifier can identify:")
-        
-        sample_cols = st.columns(4)
-        sample_classes = ['Cloudy', 'Desert', 'Green_Area', 'Water']
-        
-        for i, class_name in enumerate(sample_classes):
-            with sample_cols[i]:
-                st.write(f"**{class_name}**")
-                st.write(class_descriptions[class_name])
+        model.save('model_satellite.h5')
+    st.success("✅ Model trained and saved as 'model_satellite.h5'")
 
-# Run the app
-if __name__ == "__main__":
-    main()
+    # Plot accuracy
+    st.subheader("📈 Training Metrics")
+    fig_acc, ax_acc = plt.subplots()
+    ax_acc.plot(history.history['accuracy'], label='Training Accuracy')
+    ax_acc.plot(history.history['val_accuracy'], label='Validation Accuracy')
+    ax_acc.set_title('Accuracy')
+    ax_acc.legend()
+    st.pyplot(fig_acc)
+
+    # Plot loss
+    fig_loss, ax_loss = plt.subplots()
+    ax_loss.plot(history.history['loss'], label='Training Loss')
+    ax_loss.plot(history.history['val_loss'], label='Validation Loss')
+    ax_loss.set_title('Loss')
+    ax_loss.legend()
+    st.pyplot(fig_loss)
+
+    # Confusion matrix
+    st.subheader("🔍 Confusion Matrix")
+    class_names = list(labels.values())
+    predictions = model.predict(test_generator)
+    y_pred = np.argmax(predictions, axis=1)
+    cm = confusion_matrix(test_generator.classes, y_pred)
+
+    fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+    cax = ax_cm.matshow(cm, cmap=plt.cm.Blues)
+    fig_cm.colorbar(cax)
+    ax_cm.set_xticklabels([''] + class_names, rotation=45)
+    ax_cm.set_yticklabels([''] + class_names)
+    for i in range(len(class_names)):
+        for j in range(len(class_names)):
+            ax_cm.text(j, i, cm[i, j], va='center', ha='center', color="white" if cm[i,j]>cm.max()/2 else "black")
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    st.pyplot(fig_cm)
+
+# Inference section
+st.subheader("🧪 Try Prediction on New Image")
+uploaded_file = st.file_uploader("Upload Image", type=['jpg', 'jpeg', 'png'])
+if uploaded_file:
+    img = Image.open(uploaded_file).resize(img_size)
+    st.image(img, caption="Uploaded Image", use_column_width=True)
+    img_array = np.expand_dims(np.array(img)/255.0, axis=0)
+    model = load_model('model_satellite.h5')
+    pred = model.predict(img_array)
+    pred_label = class_names[np.argmax(pred)]
+    st.success(f"✅ Predicted Class: **{pred_label}**")
+
+st.caption("Made with ❤️ using Streamlit")
