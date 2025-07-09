@@ -4,9 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import Image
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import load_model
+    from tensorflow.keras.preprocessing import image
+    TF_AVAILABLE = True
+except ImportError:
+    TF_AVAILABLE = False
+    st.error("TensorFlow not available. Please check your requirements.txt")
 from sklearn.metrics import confusion_matrix
 import plotly.express as px
 import plotly.graph_objects as go
@@ -96,9 +101,15 @@ class_names = ['Cloudy', 'Desert', 'Green_Area', 'Water']
 @st.cache_resource
 def load_trained_model():
     """Load the trained model"""
+    if not TF_AVAILABLE:
+        st.error("TensorFlow is not available. Cannot load model.")
+        return None
     try:
         model = load_model("Modelenv.v1.h5")
         return model
+    except FileNotFoundError:
+        st.error("Model file 'Modelenv.v1.h5' not found. Please ensure it's uploaded to your repository.")
+        return None
     except Exception as e:
         st.error(f"Error loading model: {e}")
         return None
@@ -183,6 +194,16 @@ def main():
         """)
     
     # Load model
+    if not TF_AVAILABLE:
+        st.error("⚠️ TensorFlow is not available. Please check your deployment configuration.")
+        st.markdown("""
+        ### Troubleshooting Steps:
+        1. Use `tensorflow-cpu>=2.16.0` instead of `tensorflow==2.15.0`
+        2. Add `protobuf>=3.20.0,<5.0.0` to requirements.txt
+        3. Use Python 3.11 or 3.12 for better compatibility
+        """)
+        st.stop()
+    
     if not st.session_state.model_loaded:
         with st.spinner("Loading model... Please wait..."):
             st.session_state.model = load_trained_model()
@@ -190,7 +211,13 @@ def main():
                 st.session_state.model_loaded = True
                 st.success("Model loaded successfully!")
             else:
-                st.error("Failed to load model. Please ensure 'Modelenv.v1.h5' is in the same directory.")
+                st.error("Failed to load model. Please check the troubleshooting steps below.")
+                st.markdown("""
+                ### Troubleshooting Steps:
+                1. Ensure 'Modelenv.v1.h5' is in your repository root
+                2. Check if the model file is corrupted
+                3. Verify TensorFlow version compatibility
+                """)
                 st.stop()
     
     if page == "🔍 Image Classification":
